@@ -3,36 +3,16 @@ bundle:
 
 variables:
   catalog_name:
-    description: "UC catalog to install into (created if missing). Customer needs CREATE CATALOG."
+    description: "UC catalog (must exist or you must have CREATE CATALOG privileges)"
+    default: main
+  schema_name:
+    description: "Schema where all demo tables live (created if missing)"
     default: cmeg_demo
-  bronze_schema:
-    default: bronze
-  silver_schema:
-    default: silver
-  gold_schema:
-    default: gold
-  ml_schema:
-    default: ml
-  ops_schema:
-    description: "Schema for _cmeg_assets and bookkeeping tables"
-    default: ops
-  data_scale:
-    description: "small | medium | large"
-    default: small
-  serving_endpoint_enabled:
-    description: "Create the real-time serving endpoint (DBU cost while running)"
-    default: "true"
-  genai_model:
-    description: "Foundation Model for explanation copy"
-    default: databricks-meta-llama-3-3-70b-instruct
   dbr_version:
     default: 15.4.x-cpu-ml-scala2.12
   node_type:
     description: "Cluster node type (Azure default; override per cloud)"
     default: Standard_D4ds_v5
-  warehouse_id:
-    description: "SQL warehouse ID for the AI/BI dashboard (optional)"
-    default: ""
 
 include:
   - resources/*.yml

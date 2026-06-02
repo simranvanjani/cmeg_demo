@@ -3,7 +3,7 @@ resources:
     cmeg_dlt_pipeline:
       name: cmeg_dlt_pipeline
       catalog: ${var.catalog_name}
-      target: ${var.silver_schema}
+      target: ${var.schema_name}
       photon: true
       serverless: true
       channel: PREVIEW
@@ -11,9 +11,7 @@ resources:
       continuous: false
       libraries:
         - notebook:
-            path: ../narrative/_dlt_pipeline_definition.py
+            path: ../_resources/_dlt_pipeline.py
       configuration:
         cmeg.catalog: ${var.catalog_name}
-        cmeg.bronze_schema: ${var.bronze_schema}
-        cmeg.silver_schema: ${var.silver_schema}
-        cmeg.gold_schema: ${var.gold_schema}
+        cmeg.schema: ${var.schema_name}

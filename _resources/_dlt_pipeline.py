@@ -1,51 +1,47 @@
 # Databricks notebook source
-# DLT pipeline definition — referenced by resources/pipelines.yml.
-# Reads parquet from the landing volume via Auto Loader, applies expectations,
-# produces silver + gold tables with Liquid Clustering.
+# DLT pipeline definition — referenced by the cmeg_dlt_pipeline created in
+# _resources/02-create-resources. Reads parquet from the landing volume via
+# Auto Loader, applies expectations, produces silver + gold tables with
+# Liquid Clustering.
+#
+# All tables land in `{catalog}.{schema}` with bronze_/silver_/gold_ prefixes.
 
 import dlt
 from pyspark.sql import functions as F
 
 CATALOG = spark.conf.get("cmeg.catalog")
-BRONZE = spark.conf.get("cmeg.bronze_schema")
-SILVER = spark.conf.get("cmeg.silver_schema")
-GOLD = spark.conf.get("cmeg.gold_schema")
+SCHEMA = spark.conf.get("cmeg.schema")
+VOLUME = f"/Volumes/{CATALOG}/{SCHEMA}/landing"
 
-VOLUME = f"/Volumes/{CATALOG}/{BRONZE}/landing"
+
+# ----- BRONZE: raw ingest via Auto Loader -----------------------------------
+
+def _auto_loader(path: str):
+    return (
+        spark.readStream.format("cloudFiles")
+        .option("cloudFiles.format", "parquet")
+        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
+        .option("cloudFiles.inferColumnTypes", "true")
+        .load(path)
+    )
 
 
 @dlt.table(name="bronze_users", table_properties={"quality": "bronze"})
 def bronze_users():
-    return (
-        spark.readStream.format("cloudFiles")
-        .option("cloudFiles.format", "parquet")
-        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-        .option("cloudFiles.inferColumnTypes", "true")
-        .load(f"{VOLUME}/users")
-    )
+    return _auto_loader(f"{VOLUME}/users")
 
 
 @dlt.table(name="bronze_items", table_properties={"quality": "bronze"})
 def bronze_items():
-    return (
-        spark.readStream.format("cloudFiles")
-        .option("cloudFiles.format", "parquet")
-        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-        .option("cloudFiles.inferColumnTypes", "true")
-        .load(f"{VOLUME}/items")
-    )
+    return _auto_loader(f"{VOLUME}/items")
 
 
 @dlt.table(name="bronze_interactions", table_properties={"quality": "bronze"})
 def bronze_interactions():
-    return (
-        spark.readStream.format("cloudFiles")
-        .option("cloudFiles.format", "parquet")
-        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-        .option("cloudFiles.inferColumnTypes", "true")
-        .load(f"{VOLUME}/interactions")
-    )
+    return _auto_loader(f"{VOLUME}/interactions")
 
+
+# ----- SILVER: deduped, validated, liquid-clustered -------------------------
 
 @dlt.table(name="silver_users", cluster_by=["user_id"])
 @dlt.expect_or_drop("user_id_not_null", "user_id IS NOT NULL")
@@ -68,17 +64,19 @@ def silver_interactions():
     return dlt.read_stream("bronze_interactions")
 
 
+# ----- GOLD: marts feeding feature engineering and BI -----------------------
+
 @dlt.table(
     name="gold_user_360",
     cluster_by=["user_id"],
-    comment="User-level aggregates: watch counts, favorite genre",
+    comment="Per-user aggregates used for ML features and BI",
 )
 def gold_user_360():
     inters = dlt.read("silver_interactions")
-    items = dlt.read("silver_items")
-    j = inters.join(items.select("content_id", "genre"), "content_id", "left")
+    items = dlt.read("silver_items").select("content_id", "genre")
     return (
-        j.groupBy("user_id")
+        inters.join(items, "content_id", "left")
+        .groupBy("user_id")
         .agg(
             F.count("*").alias("interaction_count"),
             F.sum("watch_seconds").alias("total_watch_seconds"),
@@ -89,10 +87,12 @@ def gold_user_360():
     )
 
 
-@dlt.table(name="gold_interactions", cluster_by=["user_id", "content_id"])
+@dlt.table(
+    name="gold_interactions",
+    cluster_by=["user_id", "content_id"],
+    comment="Interaction events enriched with user country/age and item genre/year",
+)
 def gold_interactions():
-    return (
-        dlt.read("silver_interactions")
-        .join(dlt.read("silver_items").select("content_id", "genre", "release_year"), "content_id", "left")
-        .join(dlt.read("silver_users").select("user_id", "country", "age"), "user_id", "left")
-    )
+    users = dlt.read("silver_users").select("user_id", "country", "age")
+    items = dlt.read("silver_items").select("content_id", "genre", "release_year")
+    return dlt.read("silver_interactions").join(items, "content_id", "left").join(users, "user_id", "left")

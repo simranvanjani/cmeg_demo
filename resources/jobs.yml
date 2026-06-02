@@ -3,44 +3,38 @@ resources:
     cmeg_orchestrator:
       name: cmeg_orchestrator
       tasks:
-        - task_key: setup_and_data
-          notebook_task:
-            notebook_path: ../narrative/01_setup_and_data.py
-          job_cluster_key: demo_cluster
         - task_key: dlt_medallion
-          depends_on:
-            - task_key: setup_and_data
           pipeline_task:
             pipeline_id: ${resources.pipelines.cmeg_dlt_pipeline.id}
         - task_key: features_and_vectors
           depends_on:
             - task_key: dlt_medallion
           notebook_task:
-            notebook_path: ../narrative/03_features_and_vectors.py
+            notebook_path: ../02-Features-and-Vectors.py
           job_cluster_key: demo_cluster
         - task_key: train_and_register
           depends_on:
             - task_key: features_and_vectors
           notebook_task:
-            notebook_path: ../narrative/04_train_and_register.py
+            notebook_path: ../03-Train-and-Register.py
           job_cluster_key: demo_cluster
         - task_key: serve_and_explain
           depends_on:
             - task_key: train_and_register
           notebook_task:
-            notebook_path: ../narrative/05_serve_and_explain.py
+            notebook_path: ../04-Serve-and-Explain.py
           job_cluster_key: demo_cluster
         - task_key: monitor_and_govern
           depends_on:
             - task_key: serve_and_explain
           notebook_task:
-            notebook_path: ../narrative/06_monitor_and_govern.py
+            notebook_path: ../05-Monitor-and-Govern.py
           job_cluster_key: demo_cluster
         - task_key: genie_space
           depends_on:
             - task_key: monitor_and_govern
           notebook_task:
-            notebook_path: ../narrative/07_genie_space.py
+            notebook_path: ../06-Genie-Space.py
           job_cluster_key: demo_cluster
       job_clusters:
         - job_cluster_key: demo_cluster
@@ -56,7 +50,7 @@ resources:
       tasks:
         - task_key: uninstall
           notebook_task:
-            notebook_path: ../_install/uninstall.py
+            notebook_path: ../_resources/99-uninstall.py
           job_cluster_key: demo_cluster
       job_clusters:
         - job_cluster_key: demo_cluster

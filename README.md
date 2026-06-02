@@ -2,57 +2,80 @@
 
 A plug-and-play Databricks demo of a production-representative content recommendation system for media/OTT customers (TrueID-style).
 
-## Install in 60 seconds (no CLI)
+## Install (60 seconds, no CLI)
 
-1. In your Databricks workspace, click **Workspace** → **Repos** → **Add Repo** and paste this repo's URL.
-2. Open the cloned folder. You'll see **`INSTALL.py`** at the top.
-3. Open `INSTALL.py`, attach any cluster, and click **Run all**.
-4. When it finishes, click the green **Open START_HERE →** button in the output.
+1. **Clone the repo into your Databricks workspace**: Workspace → Repos → **Add Repo** → paste this repo's URL.
+2. **Edit `config.py`** in the cloned folder. Set:
+   - `CATALOG` — defaults to `main` (works in every workspace). Change to your own catalog if you have one.
+   - `SCHEMA` — defaults to `cmeg_demo`. All tables created here.
+   - (Optional) `DATA_SCALE` — `small` / `medium` / `large`.
+3. **Open `00-CMEG-Demo-Intro.py`** and click **Run all**.
 
-That's it. `INSTALL.py` creates the catalog (if missing), schemas, volume, DLT pipeline, orchestrator job, and cleanup job — all from one notebook via the Databricks SDK. No CLI, no `bundle deploy`.
+That's it. The intro notebook generates synthetic data, creates the DLT pipeline and jobs, and shows a live table of contents linking to every chapter.
 
-### Catalog choice
+## Structure
 
-The installer auto-detects existing catalogs in your workspace and defaults to `main` (present in every workspace). You can override the `catalog_name` widget at the top of `INSTALL.py` to any catalog you have CREATE SCHEMA privileges on.
+```
+cmeg_demo/
+├── config.py                       ← edit catalog/schema here (no widgets)
+├── 00-CMEG-Demo-Intro.py           ← entry: architecture, install, TOC
+├── 01-DLT-Medallion.py             ← chapter 1
+├── 02-Features-and-Vectors.py      ← chapter 2
+├── 03-Train-and-Register.py        ← chapter 3
+├── 04-Serve-and-Explain.py         ← chapter 4
+├── 05-Monitor-and-Govern.py        ← chapter 5
+├── 06-Genie-Space.py               ← chapter 6
+├── _resources/
+│   ├── 00-setup.py                 ← %run by every chapter (no boilerplate)
+│   ├── 01-generate-data.py         ← one-time data generation
+│   ├── 02-create-resources.py     ← one-time pipeline/job creation
+│   ├── 99-uninstall.py             ← cleanup
+│   └── _dlt_pipeline.py            ← DLT pipeline definition
+├── lib/cmeg/                       ← shared Python helpers (companion cards, models, features, ...)
+├── tests/                          ← pytest unit tests on lib/cmeg/
+└── docs/superpowers/               ← design spec + implementation plan
+```
 
-## What gets built
+## The 6 chapters
 
-7 narrative chapters under `narrative/`:
-
-| # | Chapter | What it shows |
+| # | Chapter | What you'll see |
 |---|---|---|
-| 0 | `00_START_HERE` | Live TOC of every asset created across chapters |
-| 1 | `01_setup_and_data` | Synthetic data generation, UC tags for ownership |
-| 2 | `02_dlt_medallion` | DLT bronze→silver→gold with expectations + Liquid Clustering |
-| 3 | `03_features_and_vectors` | Feature Store + Vector Search index over item embeddings |
-| 4 | `04_train_and_register` | Two-tower retrieval + LightGBM ranker (MLflow signatures, `@champion`) |
-| 5 | `05_serve_and_explain` | Chained Model Serving endpoint with diversity rerank + GenAI explanation |
-| 6 | `06_monitor_and_govern` | Lakehouse Monitor on inference table + PII tags + audit query |
-| 7 | `07_genie_space` | Genie space scoped to gold for non-technical exploration |
+| 1 | DLT Medallion | Bronze→silver→gold with Auto Loader, expectations, Liquid Clustering |
+| 2 | Features & Vectors | Feature Store (user + item) + Vector Search index over item embeddings |
+| 3 | Train & Register | Two-tower retrieval + LightGBM ranker (Optuna), both registered with `@champion` aliases |
+| 4 | Serve & Explain | Chained serving endpoint: retrieval → ranker → diversity → GenAI explanation |
+| 5 | Monitor & Govern | Lakehouse Monitor on inference table + UC tags + sample audit query |
+| 6 | Genie Space | Plain-English Q&A for business users, scoped to gold tables |
 
-## Run all chapters at once
+## Run everything end-to-end
 
-After `INSTALL.py` finishes, you can either:
-- **Click through chapters manually** — open `narrative/00_START_HERE.py` and follow the links.
-- **Run the orchestrator job** — open `cmeg_orchestrator` (linked in the install output) and click **Run now**. Runs all 7 chapters in dependency order (~20-30 min on small data).
+After `00-CMEG-Demo-Intro` finishes, you can run all 6 chapters as a single job:
+
+- **From the UI**: open the `cmeg_orchestrator` job (linked in the install output) → **Run now**.
+- **From the CLI** (SEs): `databricks bundle run cmeg_orchestrator --profile DEFAULT --target dev`.
+
+Total runtime: ~20-30 min on `small` data.
 
 ## Uninstall
 
-1. Open `cmeg_cleanup` job (created by `INSTALL.py`) and click **Run now**. This deletes the serving endpoint, vector index, monitor, and registered models.
-2. (Optional) Drop the catalog manually if you want a fully clean state.
+Either:
+- **Run the `cmeg_cleanup` job** (created by the install) — deletes endpoint, vector index, monitor, registered models.
+- Or open `_resources/99-uninstall.py` and Run All.
+
+Then optionally drop the schema yourself.
 
 ## For SEs / power users
 
-A Databricks Asset Bundle (`databricks.yml` + `resources/`) is included for SE-driven deployments:
+A Databricks Asset Bundle is included for SE-driven deploys:
 
 ```bash
-databricks bundle deploy --profile DEFAULT --target dev --var "catalog_name=my_catalog"
-databricks bundle run cmeg_orchestrator --profile DEFAULT --target dev --var "catalog_name=my_catalog"
+databricks bundle deploy --profile DEFAULT --target dev
+databricks bundle run cmeg_orchestrator --profile DEFAULT --target dev
 ```
 
-The bundle is optional. Customers should use `INSTALL.py` instead.
+The bundle is optional — customers should use the `00-CMEG-Demo-Intro` notebook instead.
 
-## Documentation
+## Design and plan docs
 
-- Design spec: `docs/superpowers/specs/2026-06-02-cmeg-rec-demo-design.md`
-- Implementation plan: `docs/superpowers/plans/2026-06-02-cmeg-rec-demo.md`
+- Spec: `docs/superpowers/specs/2026-06-02-cmeg-rec-demo-design.md`
+- Plan: `docs/superpowers/plans/2026-06-02-cmeg-rec-demo.md`
