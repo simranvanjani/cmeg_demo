@@ -1,30 +1,36 @@
 # Databricks notebook source
-# MAGIC %md
-# MAGIC # Chapter 4 — Serve and Explain (chained inference + GenAI)
+# MAGIC %md-sandbox
+# MAGIC # Chapter 4 of 6 — Serve and Explain (chained inference + GenAI)
 # MAGIC
-# MAGIC ## What we build
+# MAGIC > 🕐 **6 min to read · 4 min to run**
 # MAGIC
-# MAGIC A single **Model Serving endpoint** that, on each request, runs a 4-stage chain:
+# MAGIC ## What you'll learn
+# MAGIC
+# MAGIC - How to **chain multiple models behind a single serving endpoint** so the app makes one API call
+# MAGIC - The **diversity rerank** pattern — preventing the "5 dramas in a row" failure mode
+# MAGIC - How to add a **GenAI explanation** to every recommendation card via Foundation Models
+# MAGIC - How **inference table auto-capture** records every request/response automatically for chapter 5's monitoring
+# MAGIC - **Dynamic views** for column-level PII masking in UC
+# MAGIC
+# MAGIC ## What we're building
 # MAGIC
 # MAGIC ```
 # MAGIC POST /serving-endpoints/cmeg_rec_endpoint/invocations
 # MAGIC   { "user_id": "u_0001234" }
 # MAGIC
 # MAGIC ┌──────────────────────────────────────────────────────────────────────┐
-# MAGIC │  1. Two-tower retrieval  →  100 candidate content_ids                │
-# MAGIC │  2. LightGBM ranker      →  scored candidates (P(completed))         │
-# MAGIC │  3. Diversity rerank     →  genre-deduped top 5                      │
-# MAGIC │  4. Foundation Model     →  "Why we recommend this" copy per item    │
+# MAGIC │  Stage 1 — Two-tower retrieval     →  100 candidate content_ids       │
+# MAGIC │  Stage 2 — LightGBM ranker         →  scored candidates (P(completed))│
+# MAGIC │  Stage 3 — Diversity rerank        →  genre-deduped top 5             │
+# MAGIC │  Stage 4 — Foundation Model        →  "Why we recommend this" per card│
 # MAGIC └──────────────────────────────────────────────────────────────────────┘
-# MAGIC   returns: [{title, genre, score, why}, ...]
+# MAGIC                  ▼ auto-captured ▼
+# MAGIC          ┌─inference table──────────┐
+# MAGIC          │ request, response, ts    │── monitored in chapter 5
+# MAGIC          └──────────────────────────┘
 # MAGIC ```
 # MAGIC
-# MAGIC ## Best practices applied
-# MAGIC
-# MAGIC - **Inference table** auto-captures every request and response → drives the Lakehouse Monitor in chapter 5
-# MAGIC - **Diversity reranking** prevents the "5 dramas in a row" failure mode — genre dedupe + top-K cap
-# MAGIC - **GenAI explanation** generated per-card with a Foundation Model — gives the customer a "why" they can show end-users
-# MAGIC - **Dynamic view** masks PII columns unless the caller is in the `cmeg_pii_readers` group — demonstrates UC fine-grained access
+# MAGIC One HTTP request → 4-stage pipeline → ranked recommendations with human-readable explanations.
 
 # COMMAND ----------
 # MAGIC %run ./_resources/00-setup
@@ -42,13 +48,21 @@ mlflow.set_registry_uri("databricks-uc")
 client = mlflow.MlflowClient()
 
 # COMMAND ----------
-# MAGIC %md ## Build the chained pyfunc and register it
+# MAGIC %md
+# MAGIC ## Step 1 of 4 — Build the chained pyfunc
+# MAGIC
+# MAGIC A pyfunc model is just a Python class with a `predict()` method. Ours wraps the two registered
+# MAGIC models and adds the diversity rerank + GenAI explanation logic. The code lives in
+# MAGIC `lib/cmeg/serving.py` so it's importable + testable.
+# MAGIC
+# MAGIC We log it to MLflow with **artifacts** pointing at the two `@champion` model versions. At
+# MAGIC serving time, the endpoint will resolve those references and load all three models into the
+# MAGIC same container.
 
 # COMMAND ----------
 tt_uri = f"models:/{FQ('cmeg_two_tower')}@champion"
 r_uri = f"models:/{FQ('cmeg_ranker')}@champion"
 
-# Snapshot item and user metadata for the pyfunc (so serving has no dep on Spark)
 tmp = tempfile.mkdtemp()
 item_meta_path = os.path.join(tmp, "items.parquet")
 user_meta_path = os.path.join(tmp, "users.parquet")
@@ -74,7 +88,16 @@ client.set_registered_model_alias(chain_name, "champion", version=chain_latest)
 print(f"✓ {chain_name} v{chain_latest} @champion")
 
 # COMMAND ----------
-# MAGIC %md ## Create the serving endpoint with inference-table auto-capture
+# MAGIC %md
+# MAGIC ## Step 2 of 4 — Deploy to a Model Serving endpoint with inference-table capture
+# MAGIC
+# MAGIC `auto_capture_config` is the key piece: **every request and response gets written to a Delta
+# MAGIC table automatically**, with no extra code. That table powers the Lakehouse Monitor in chapter 5.
+# MAGIC
+# MAGIC `scale_to_zero_enabled=True` means the endpoint costs nothing when idle — it spins up on first
+# MAGIC request, then drops back to zero replicas after a few minutes of no traffic.
+# MAGIC
+# MAGIC **⏳ This step takes 5-10 minutes** the first time as the endpoint provisions a container.
 
 # COMMAND ----------
 endpoint_name = "cmeg_rec_endpoint"
@@ -96,7 +119,7 @@ if SERVING_ENDPOINT_ENABLED:
         w.serving_endpoints.create(name=endpoint_name, config=config)
         print(f"✓ endpoint {endpoint_name} created")
     except Exception as e:
-        print(f"○ endpoint exists, updating: {e}")
+        print(f"○ endpoint exists, updating config: {e}")
         w.serving_endpoints.update_config(
             name=endpoint_name,
             served_entities=config.served_entities,
@@ -106,10 +129,25 @@ else:
     print("○ skipping endpoint creation (SERVING_ENDPOINT_ENABLED=False in config.py)")
 
 # COMMAND ----------
-# MAGIC %md ## Create the PII-masking dynamic view
+# MAGIC %md
+# MAGIC **🔍 Try this in the UI:**
 # MAGIC
-# MAGIC Members of `cmeg_pii_readers` (an account-level group an admin would create) see real values;
-# MAGIC everyone else sees `REDACTED`. This is the UC pattern for column-level access control.
+# MAGIC 1. Open the **Serving** tab in the left nav → click `cmeg_rec_endpoint`
+# MAGIC 2. Wait until it shows "Ready" (5-10 min on first deploy)
+# MAGIC 3. Use the **Query** tab on the right to send `{"dataframe_records": [{"user_id": "u_0000001"}]}` —
+# MAGIC    you'll get back 5 recommendations with `score`, `title`, `genre`, and a `why` field (the GenAI explanation)
+# MAGIC 4. Then click **Inference table** → you'll see your test request captured automatically
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Step 3 of 4 — Create a dynamic view that masks PII
+# MAGIC
+# MAGIC Users of the `user_features` table shouldn't see raw `fav_genre` unless they're in the
+# MAGIC `cmeg_pii_readers` group. UC dynamic views give us per-row, per-column access control
+# MAGIC using `is_account_group_member()` directly in the view definition.
+# MAGIC
+# MAGIC In production you'd have an admin create the `cmeg_pii_readers` group in account console;
+# MAGIC for the demo we just create the view — non-admin readers see `'REDACTED'` for `fav_genre`.
 
 # COMMAND ----------
 view = FQ("user_features_masked")
@@ -125,11 +163,36 @@ spark.sql(f"""
 """)
 print(f"✓ created masked view {view}")
 
+display(spark.table(view).limit(5))
+
 # COMMAND ----------
-# MAGIC %md ## Wrap up
+# MAGIC %md
+# MAGIC ## Step 4 of 4 — Confirm everything is wired up
 
 # COMMAND ----------
 inference_table = FQ("cmeg_inference_payload")
+
+try:
+    ep = w.serving_endpoints.get(name=endpoint_name)
+    print(f"endpoint state: {ep.state.ready if ep.state else 'unknown'}")
+except Exception as e:
+    print(f"endpoint info: {e}")
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Recap — what we just built
+# MAGIC
+# MAGIC - A single serving endpoint that chains retrieval → ranker → rerank → GenAI explain
+# MAGIC - An inference table auto-capturing every request for monitoring
+# MAGIC - A PII-masking dynamic view demonstrating UC column-level access control
+# MAGIC - Diversity reranking that avoids the "5 of the same genre" failure mode
+# MAGIC
+# MAGIC ## Up next — Chapter 5: Monitor and Govern
+# MAGIC
+# MAGIC We attach a **Lakehouse Monitor** to the inference table so drift in features or predictions
+# MAGIC triggers an alert. We also apply UC tags and run a sample audit query.
+
+# COMMAND ----------
 record_asset(spark, OPS_TABLE, AssetRecord(
     chapter=4, asset_type="endpoint", name=endpoint_name, id=endpoint_name,
     url=format_asset_url(workspace_url, "endpoint", endpoint_name),

@@ -1,26 +1,28 @@
 # Databricks notebook source
-# MAGIC %md
-# MAGIC # Chapter 5 — Monitor and Govern
+# MAGIC %md-sandbox
+# MAGIC # Chapter 5 of 6 — Monitor and Govern
 # MAGIC
-# MAGIC ## Why this matters
+# MAGIC > 🕐 **4 min to read · 2 min to run**
 # MAGIC
-# MAGIC A deployed recommender is a moving target. Two things go wrong silently:
-# MAGIC 1. **Input drift** — viewing habits shift (e.g., new World Cup season). Features the model trained on no longer represent reality.
-# MAGIC 2. **Prediction drift** — model outputs skew (e.g., suddenly recommending the same 5 items to everyone).
+# MAGIC ## What you'll learn
+# MAGIC
+# MAGIC - **Why deployed recommenders silently degrade** and how Lakehouse Monitoring catches it
+# MAGIC - How **UC tags** turn ad-hoc table metadata into structured governance data
+# MAGIC - How `system.access.audit` gives you a complete audit log of every UC operation
+# MAGIC - The **champion/challenger** A/B pattern for safe model promotion (concept only — we don't run it)
+# MAGIC
+# MAGIC ## Why monitor at all?
+# MAGIC
+# MAGIC A recommender that worked perfectly at launch slowly degrades. Two things go wrong silently:
+# MAGIC
+# MAGIC 1. **Input drift** — viewing habits shift (new World Cup season, a viral show drops). The features
+# MAGIC    your model trained on no longer match production.
+# MAGIC 2. **Prediction drift** — outputs skew (suddenly recommending the same 5 items to everyone, or
+# MAGIC    average scores creeping up over time).
 # MAGIC
 # MAGIC **Lakehouse Monitoring** sits on top of the inference table (auto-captured in chapter 4) and
-# MAGIC computes drift metrics on a schedule. You'll see them as charts on the table page.
-# MAGIC
-# MAGIC ## What we build
-# MAGIC
-# MAGIC 1. **Lakehouse Monitor** on the inference table with a `TimeSeries` profile (daily granularity).
-# MAGIC 2. **UC tags** for PII columns and ownership.
-# MAGIC 3. **One sample audit query** showing recent access events against `system.access.audit`.
-# MAGIC
-# MAGIC > **Sidebar — Champion/Challenger pattern**
-# MAGIC > To A/B between model versions, register a second version, assign `@challenger`, and route
-# MAGIC > a fraction of traffic via `served_entities[].traffic_percentage` on the endpoint config.
-# MAGIC > Promote with `client.set_registered_model_alias(name, 'champion', version)`.
+# MAGIC computes drift metrics nightly. You see them as charts on the table page — and can wire DBSQL
+# MAGIC alerts on them.
 
 # COMMAND ----------
 # MAGIC %run ./_resources/00-setup
@@ -31,7 +33,16 @@ from cmeg.governance import apply_pii_tags, apply_table_owner_tag
 from cmeg.monitoring import build_monitor_dir
 
 # COMMAND ----------
-# MAGIC %md ## Apply UC tags
+# MAGIC %md
+# MAGIC ## Step 1 of 3 — Apply UC governance tags
+# MAGIC
+# MAGIC Three tags we apply across the demo:
+# MAGIC - **`pii=true`** on columns containing personally identifiable data (here, `fav_genre`)
+# MAGIC - **`business_owner=cmeg_demo`** so anyone looking at the table knows who owns it
+# MAGIC - **`cost_center=cmeg_demo`** for chargeback reporting
+# MAGIC
+# MAGIC Tags are searchable in Catalog Explorer ("show me all tables tagged `pii=true`"), filterable
+# MAGIC in DBSQL queries, and feed governance dashboards.
 
 # COMMAND ----------
 user_feat = FQ("user_features")
@@ -40,7 +51,20 @@ apply_table_owner_tag(spark, user_feat, owner="cmeg_demo", cost_center="cmeg_dem
 print(f"✓ tagged {user_feat} with pii + owner + cost_center")
 
 # COMMAND ----------
-# MAGIC %md ## Create the Lakehouse Monitor on the inference table
+# MAGIC %md
+# MAGIC ## Step 2 of 3 — Create a Lakehouse Monitor on the inference table
+# MAGIC
+# MAGIC We use the `TimeSeries` profile because the inference table has a natural time column
+# MAGIC (`timestamp_ms`). The monitor computes daily slices and reports:
+# MAGIC - **Numeric drift**: how feature distributions have shifted over time
+# MAGIC - **Categorical drift**: how genre/device/country distributions have shifted
+# MAGIC - **Data quality**: nulls, type errors
+# MAGIC
+# MAGIC The monitor creates its own dashboard automatically. You'll see it linked from the inference
+# MAGIC table's page in Catalog Explorer.
+# MAGIC
+# MAGIC **⏳ Note:** The monitor needs at least one row in the inference table to compute meaningful
+# MAGIC metrics — if no one has called the endpoint yet, the dashboard will be empty until traffic flows.
 
 # COMMAND ----------
 inference_table = FQ("cmeg_inference_payload")
@@ -56,10 +80,15 @@ except Exception as e:
     print(f"○ monitor may already exist or inference table not yet populated: {e}")
 
 # COMMAND ----------
-# MAGIC %md ## Sample audit query
+# MAGIC %md
+# MAGIC ## Step 3 of 3 — Audit query against system tables
 # MAGIC
-# MAGIC `system.access.audit` records every UC operation. Filter to our catalog to see who touched
-# MAGIC the demo's tables in the last 24h.
+# MAGIC `system.access.audit` is a built-in UC system table that logs every operation against Unity
+# MAGIC Catalog: who read what, who created/dropped what, who changed permissions. Filtering to the
+# MAGIC demo catalog gives us a complete activity log for the last 24h.
+# MAGIC
+# MAGIC **🔍 Try this:** Modify the filter to look at the last 7 days, or filter by `action_name` to
+# MAGIC find specific operations (e.g., `LIST_TABLE` for read patterns, `CREATE_TABLE` for new objects).
 
 # COMMAND ----------
 try:
@@ -72,10 +101,37 @@ try:
         LIMIT 20
     """))
 except Exception as e:
-    print(f"○ system.access.audit not available in this workspace yet: {e}")
+    print(f"○ system.access.audit not yet provisioned in this workspace: {e}")
 
 # COMMAND ----------
-# MAGIC %md ## Wrap up
+# MAGIC %md
+# MAGIC ## Sidebar — the champion/challenger A/B pattern
+# MAGIC
+# MAGIC For production model upgrades, never replace your champion outright. Instead:
+# MAGIC
+# MAGIC 1. **Register the new model version** as the same registered model name.
+# MAGIC 2. **Alias it `@challenger`** instead of `@champion`.
+# MAGIC 3. **Route a fraction of endpoint traffic** to it via `served_entities[].traffic_percentage`
+# MAGIC    on the serving endpoint config.
+# MAGIC 4. **Compare champion vs challenger** in the inference table (they're labeled per-row).
+# MAGIC 5. **Promote** if challenger wins: `client.set_registered_model_alias(name, 'champion', version)`.
+# MAGIC
+# MAGIC We don't run this in the demo, but the inference table + monitoring infrastructure already in
+# MAGIC place is what makes it safe to do.
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Recap — what we just built
+# MAGIC
+# MAGIC - A Lakehouse Monitor on the inference table (drift metrics, auto-dashboard)
+# MAGIC - UC tags applied for PII + ownership
+# MAGIC - A reusable audit query against system tables
+# MAGIC
+# MAGIC ## Up next — Chapter 6: Genie Space
+# MAGIC
+# MAGIC We create an **AI/BI Genie space** so non-technical stakeholders can ask plain-English questions
+# MAGIC about the data. *"Which content genres have the highest completion rate?"* → Genie writes the SQL,
+# MAGIC runs it, shows a chart.
 
 # COMMAND ----------
 record_asset(spark, OPS_TABLE, AssetRecord(

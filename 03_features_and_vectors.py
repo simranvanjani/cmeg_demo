@@ -1,25 +1,22 @@
 # Databricks notebook source
-# MAGIC %md
-# MAGIC # Chapter 2 — Features and Vector Search
+# MAGIC %md-sandbox
+# MAGIC # Chapter 2 of 6 — Features and Vector Search
 # MAGIC
-# MAGIC ## Why this matters
+# MAGIC > 🕐 **5 min to read · 3 min to run**
 # MAGIC
-# MAGIC Production recommenders need **two kinds of lookups** at serving time, each with different
-# MAGIC latency and quality requirements:
+# MAGIC ## What you'll learn
 # MAGIC
-# MAGIC | Lookup | Latency target | Mechanism |
-# MAGIC | --- | --- | --- |
-# MAGIC | "What features does this user have right now?" | < 10ms | **Online Tables** mirror Feature Store tables to a low-latency store |
-# MAGIC | "Find me the 100 items most similar to what this user watched" | < 50ms | **Vector Search** indexes item embeddings |
+# MAGIC - **Why production recommenders need TWO kinds of lookups** at serving time, with very different SLAs
+# MAGIC - How the **Feature Engineering API** tracks model-feature lineage automatically
+# MAGIC - How **Vector Search** indexes text embeddings without leaving the lakehouse
+# MAGIC - The role of **Online Tables** for sub-10ms feature lookup (prod pattern, mentioned here)
 # MAGIC
-# MAGIC ## What we build in this chapter
+# MAGIC ## The two lookups
 # MAGIC
-# MAGIC 1. **User feature table** — behavioral aggregates (watch_count, avg_session_seconds, fav_genre, last_active_ts)
-# MAGIC 2. **Item feature table** — content metadata + popularity signals
-# MAGIC 3. **Vector Search index** — embeddings over item synopsis text via `databricks-bge-large-en`
-# MAGIC
-# MAGIC The two-tower retrieval model in chapter 3 will use the item embeddings to find
-# MAGIC candidates; the ranker will use both user and item features to score them.
+# MAGIC | Lookup | When | Latency budget | What we use |
+# MAGIC | --- | --- | --- | --- |
+# MAGIC | "What does this user look like right now?" | every request | **< 10 ms** | Feature Store table (+ Online Table in prod) |
+# MAGIC | "Find 100 items semantically similar to what this user enjoys" | every request | **< 50 ms** | Vector Search index over item embeddings |
 
 # COMMAND ----------
 # MAGIC %run ./_resources/00-setup
@@ -41,7 +38,14 @@ from cmeg.features import build_user_features, build_item_features
 fe = FeatureEngineeringClient()
 
 # COMMAND ----------
-# MAGIC %md ## Build user features
+# MAGIC %md
+# MAGIC ## Step 1 of 4 — Build user features
+# MAGIC
+# MAGIC We aggregate per-user behavior from `gold_interactions`: how many sessions, average watch time,
+# MAGIC favorite genre, last active time. These are the features the **ranker** in chapter 3 will use.
+# MAGIC
+# MAGIC **Note:** the SQL logic lives in `lib/cmeg/features.py` so it's importable + testable. The notebook
+# MAGIC just calls it.
 
 # COMMAND ----------
 gold_inter = spark.table(FQ("gold_interactions"))
@@ -51,16 +55,24 @@ user_feats = build_user_features(gold_inter)
 display(user_feats.limit(10))
 
 # COMMAND ----------
-# MAGIC %md ## Build item features
+# MAGIC %md
+# MAGIC ## Step 2 of 4 — Build item features
 
 # COMMAND ----------
 item_feats = build_item_features(silver_items, gold_inter)
 display(item_feats.limit(10))
 
 # COMMAND ----------
-# MAGIC %md ## Register both as Feature Engineering tables
-# MAGIC The Feature Engineering client logs lineage in UC: every model that later trains on these
-# MAGIC features will be linked back to the source table.
+# MAGIC %md
+# MAGIC ## Step 3 of 4 — Register as Feature Engineering tables
+# MAGIC
+# MAGIC The `FeatureEngineeringClient.create_table` call does two important things:
+# MAGIC 1. Writes the data as a Delta table under our schema.
+# MAGIC 2. **Registers the table as a Feature Store entity** — every model trained with these features
+# MAGIC    will be linked back here in UC lineage.
+# MAGIC
+# MAGIC **🔍 What to look for after this runs:** Open the **Features** tab in the left nav. You'll see
+# MAGIC `user_features` and `item_features` listed with their primary keys.
 
 # COMMAND ----------
 user_feat_table = FQ("user_features")
@@ -69,20 +81,33 @@ item_feat_table = FQ("item_features")
 try:
     fe.create_table(name=user_feat_table, primary_keys=["user_id"], df=user_feats,
                     description="Per-user behavioral features (cmeg demo)")
+    print(f"✓ created {user_feat_table}")
 except Exception:
     fe.write_table(name=user_feat_table, df=user_feats, mode="merge")
+    print(f"✓ updated {user_feat_table}")
 
 try:
     fe.create_table(name=item_feat_table, primary_keys=["content_id"], df=item_feats,
                     description="Per-item popularity and metadata features (cmeg demo)")
+    print(f"✓ created {item_feat_table}")
 except Exception:
     fe.write_table(name=item_feat_table, df=item_feats, mode="merge")
+    print(f"✓ updated {item_feat_table}")
 
 # COMMAND ----------
-# MAGIC %md ## Vector Search index
+# MAGIC %md
+# MAGIC ## Step 4 of 4 — Build the Vector Search index over item synopsis
 # MAGIC
-# MAGIC We index the item synopsis text using `databricks-bge-large-en`, a Databricks-hosted
-# MAGIC embedding model. Vector Search will keep the index in sync via Delta Change Data Feed.
+# MAGIC Vector Search is Databricks' managed embedding index. We point it at a Delta table
+# MAGIC (with Change Data Feed enabled) and tell it which column holds the text we want embedded.
+# MAGIC Databricks hosts the `databricks-bge-large-en` embedding model for us, and the index
+# MAGIC stays in sync as the source table changes.
+# MAGIC
+# MAGIC **In chapter 3** the two-tower model will use its own learned embeddings (not these BGE ones)
+# MAGIC but the pattern is identical: index embeddings in Vector Search, query them at serving time.
+# MAGIC
+# MAGIC **🔍 What to look for:** Open the Catalog Explorer → your catalog → schema → `item_index`.
+# MAGIC You'll see the index status and a sample query box.
 
 # COMMAND ----------
 vs = VectorSearchClient(disable_notice=True)
@@ -93,6 +118,7 @@ try:
 except Exception as e:
     print(f"○ endpoint exists: {e}")
 
+# COMMAND ----------
 # Source table for the index — must have CDF enabled
 index_source = FQ("item_features_for_index")
 spark.sql(f"CREATE OR REPLACE TABLE {index_source} AS SELECT content_id, title, synopsis, genre FROM {item_feat_table}")
@@ -114,7 +140,19 @@ except Exception as e:
     print(f"○ index exists: {e}")
 
 # COMMAND ----------
-# MAGIC %md ## Wrap up
+# MAGIC %md
+# MAGIC ## Recap — what we just built
+# MAGIC
+# MAGIC - `user_features` Delta table with 5 behavioral aggregates per user
+# MAGIC - `item_features` Delta table with popularity + metadata per item
+# MAGIC - A **Vector Search index** over item synopsis text, refreshed automatically as the source changes
+# MAGIC - Both feature tables are registered with the Feature Engineering API → **lineage from gold → feature → model** kicks in automatically when we train in the next chapter
+# MAGIC
+# MAGIC ## Up next — Chapter 3: Train and Register
+# MAGIC
+# MAGIC We train a **two-tower retrieval model** (the architecture YouTube and Spotify use) and a
+# MAGIC **LightGBM ranker** with Optuna hyperparameter search. Both get registered to Unity Catalog
+# MAGIC with `@champion` aliases.
 
 # COMMAND ----------
 for fq, desc in [(user_feat_table, "User feature table"), (item_feat_table, "Item feature table")]:

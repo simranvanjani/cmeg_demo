@@ -1,35 +1,32 @@
 # Databricks notebook source
-# MAGIC %md
-# MAGIC # Chapter 3 — Train and Register Models
+# MAGIC %md-sandbox
+# MAGIC # Chapter 3 of 6 — Train and Register Models
 # MAGIC
-# MAGIC ## Why two models?
+# MAGIC > 🕐 **7 min to read · 5 min to run**
 # MAGIC
-# MAGIC YouTube, Spotify, Netflix, TikTok — every large-scale content recommender uses **two-stage retrieval + ranking**:
+# MAGIC ## What you'll learn
+# MAGIC
+# MAGIC - **Why production recommenders use TWO models** (retrieval + ranker), not one
+# MAGIC - How **MLflow** captures every experiment with signatures, input examples, and lineage
+# MAGIC - How **Optuna** integrates with MLflow for hyperparameter search
+# MAGIC - How **Unity Catalog Model Registry aliases** (`@champion`, `@challenger`) replace stage strings
+# MAGIC
+# MAGIC ## The two-stage retrieval+ranking architecture
 # MAGIC
 # MAGIC ```
-# MAGIC ┌─────────────┐    ~100 candidates  ┌──────────┐    ranked top-N    ┌──────────┐
-# MAGIC │  Retrieval  │ ───────────────────▶│  Ranker  │ ──────────────────▶│   App    │
-# MAGIC │ (two-tower) │   from millions     │ (LightGBM│                    │          │
-# MAGIC └─────────────┘                     └──────────┘                    └──────────┘
+# MAGIC                       ┌─────────────────┐   ~100 candidates    ┌──────────────┐    top-N    ┌─────┐
+# MAGIC POST /recs/u_12345 ──▶│ Two-Tower       │ ─────────────────────▶│ GBT Ranker   │ ───────────▶│ App │
+# MAGIC                       │ Retrieval       │   from 5,000 items   │ (LightGBM)   │             │     │
+# MAGIC                       │ (this chapter)  │                       │ (this chap.) │             └─────┘
+# MAGIC                       └─────────────────┘                       └──────────────┘
+# MAGIC                          cheap, fast                              expensive features,
+# MAGIC                          item embedding                            rich scoring
+# MAGIC                          dot product
 # MAGIC ```
 # MAGIC
-# MAGIC - **Retrieval** narrows millions of items down to ~100 candidates fast. Cheap dot-product over learned embeddings.
-# MAGIC - **Ranker** scores those candidates with rich features (popularity, freshness, user state).
-# MAGIC
-# MAGIC ## What we build in this chapter
-# MAGIC
-# MAGIC 1. **Two-tower retrieval** trained with matrix-factorization-style SGD on (user, item, watch_seconds).
-# MAGIC    Produces a user embedding table and an item embedding table. (Lightweight numpy implementation;
-# MAGIC    in production you'd swap in TensorFlow Recommenders.)
-# MAGIC 2. **LightGBM ranker** with a small **Optuna hyperparameter search** (5 trials).
-# MAGIC    Predicts `P(completed)` from user/item features.
-# MAGIC
-# MAGIC ## Best practices applied
-# MAGIC
-# MAGIC - **MLflow model signatures + input examples** logged with both models — required for prod-grade serving.
-# MAGIC - **Unity Catalog Model Registry** with `@champion` alias — clean promotion semantics, no "stage" strings.
-# MAGIC - **Hyperparameter tuning** (Optuna) tracked as nested MLflow runs.
-# MAGIC - **Model descriptions** set on the registered model so consumers know what it does.
+# MAGIC Every large content recommender (YouTube, Spotify, Netflix, TikTok) uses this pattern. The
+# MAGIC retriever is cheap and approximate; the ranker is expensive and precise. Together they let you
+# MAGIC personalize over millions of items at sub-100ms latency.
 
 # COMMAND ----------
 # MAGIC %run ./_resources/00-setup
@@ -55,16 +52,39 @@ mlflow.set_experiment(experiment_path)
 client = mlflow.MlflowClient()
 
 # COMMAND ----------
-# MAGIC %md ## Load training data
+# MAGIC %md
+# MAGIC ## Step 1 of 4 — Load training data
+# MAGIC
+# MAGIC We pull a sample of `gold_interactions` (capped at 200K for the demo) plus the two feature
+# MAGIC tables we built in chapter 2. The interactions provide the (user, item, watch_seconds) signal;
+# MAGIC the features provide the side data the ranker uses for scoring.
 
 # COMMAND ----------
 inter = spark.table(FQ("gold_interactions")).limit(200_000).toPandas()
 user_feats = spark.table(FQ("user_features")).toPandas()
 item_feats = spark.table(FQ("item_features")).toPandas()
-print(f"interactions={len(inter)}, users={len(user_feats)}, items={len(item_feats)}")
+print(f"interactions={len(inter):,}  users={len(user_feats):,}  items={len(item_feats):,}")
 
 # COMMAND ----------
-# MAGIC %md ## Train two-tower retrieval
+# MAGIC %md
+# MAGIC ## Step 2 of 4 — Train the two-tower retrieval model
+# MAGIC
+# MAGIC ### What is a two-tower model?
+# MAGIC
+# MAGIC Two-tower = one neural network for users, another for items. Both project into the same
+# MAGIC embedding space. At serving time:
+# MAGIC 1. Look up the user's embedding (fast)
+# MAGIC 2. Find items whose embeddings are closest (dot product, can use Vector Search)
+# MAGIC
+# MAGIC We're using a lightweight matrix-factorization SGD implementation (numpy, 32-dim embeddings,
+# MAGIC 3 epochs) to keep the demo fast. In production you'd swap in TensorFlow Recommenders or
+# MAGIC PyTorch. The output shape — a user embedding table and an item embedding table — is identical.
+# MAGIC
+# MAGIC ### MLflow best practices applied here
+# MAGIC
+# MAGIC - **`mlflow.models.infer_signature`** — captures input/output schema for the registered model
+# MAGIC - **`input_example`** — a 1-row sample logged with the model so future callers can introspect
+# MAGIC - **`registered_model_name`** — auto-registers to UC Model Registry on log
 
 # COMMAND ----------
 tt_model_name = FQ("cmeg_two_tower")
@@ -105,7 +125,21 @@ client.update_registered_model(tt_model_name, description="Two-tower retrieval: 
 print(f"✓ {tt_model_name} v{tt_latest} aliased @champion")
 
 # COMMAND ----------
-# MAGIC %md ## Train LightGBM ranker with Optuna hyperparameter search
+# MAGIC %md
+# MAGIC ## Step 3 of 4 — Train the LightGBM ranker with Optuna hyperparameter search
+# MAGIC
+# MAGIC Now we train the second stage. The ranker takes (user_features × item_features) pairs and
+# MAGIC predicts `P(completed)` — the probability the user will finish watching this title.
+# MAGIC
+# MAGIC ### Why Optuna?
+# MAGIC
+# MAGIC We run 5 trials with Bayesian optimization over `num_leaves`, `learning_rate`, `n_estimators`,
+# MAGIC `min_child_samples`. Each trial is logged as a nested MLflow run, and the best one becomes
+# MAGIC the registered model. In production you'd run 50-200 trials.
+# MAGIC
+# MAGIC **🔍 What to look for after this runs:** Open the **Experiments** tab in the left nav, find
+# MAGIC `cmeg_demo_experiments`, and you'll see one parent run for the ranker with multiple Optuna
+# MAGIC child trials, each with its own metrics and hyperparameter set.
 
 # COMMAND ----------
 r_model_name = FQ("cmeg_ranker")
@@ -136,21 +170,52 @@ with mlflow.start_run(run_name="ranker"):
 r_latest = client.get_registered_model(r_model_name).latest_versions[0].version
 client.set_registered_model_alias(r_model_name, "champion", version=r_latest)
 client.update_registered_model(r_model_name, description="LightGBM ranker: P(completed) for (user, content). Optuna-tuned.")
-print(f"✓ {r_model_name} v{r_latest} aliased @champion (val AUC = {info['val_auc']:.3f})")
+print(f"✓ {r_model_name} v{r_latest} @champion (val AUC = {info['val_auc']:.3f})")
 
 # COMMAND ----------
-# MAGIC %md ## Wrap up
+# MAGIC %md
+# MAGIC ## Step 4 of 4 — Inspect the registered models in Unity Catalog
+# MAGIC
+# MAGIC **🔍 Try this:** Open the Catalog Explorer (left nav → Catalog) → your catalog → schema.
+# MAGIC You'll see two registered models alongside the tables: **`cmeg_two_tower`** and **`cmeg_ranker`**.
+# MAGIC
+# MAGIC Click `cmeg_ranker` → notice:
+# MAGIC - **Aliases tab** shows `@champion` pointing at version 1
+# MAGIC - **Lineage tab** shows the model is connected to `user_features` and `item_features` and (via those)
+# MAGIC   back to `gold_interactions` and the DLT pipeline — automatic
+# MAGIC - **Description** appears as we set it via `update_registered_model`
+# MAGIC
+# MAGIC ### The `@champion` alias pattern
+# MAGIC
+# MAGIC Old Databricks Model Registry had stages: Staging / Production / Archived. UC Model Registry
+# MAGIC uses **aliases**: arbitrary string labels you point at specific versions. The convention is:
+# MAGIC - `@champion` — the version currently live in serving
+# MAGIC - `@challenger` — a candidate version being A/B-tested
+# MAGIC - Promote with `client.set_registered_model_alias(name, "champion", version)` — atomic, auditable
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Recap — what we just built
+# MAGIC
+# MAGIC - Two registered models in UC, both with `@champion` aliases and full lineage
+# MAGIC - **Retriever**: takes `user_id`, returns top-100 candidate `content_id`s
+# MAGIC - **Ranker**: takes user+item features, returns `P(completed)`
+# MAGIC - One MLflow experiment with parent runs + Optuna child trials
+# MAGIC
+# MAGIC ## Up next — Chapter 4: Serve and Explain
+# MAGIC
+# MAGIC We **chain** the retriever and ranker behind a single Model Serving endpoint. Then we add a
+# MAGIC **diversity rerank** (don't recommend 5 dramas in a row) and call a **Foundation Model** to generate
+# MAGIC the "why we recommend this" copy your app shows under each card.
 
 # COMMAND ----------
 record_asset(spark, OPS_TABLE, AssetRecord(
     chapter=3, asset_type="model", name=tt_model_name, id=tt_model_name,
-    url=format_asset_url(workspace_url, "model", tt_model_name),
-    description="Two-tower retrieval @champion",
+    url=format_asset_url(workspace_url, "model", tt_model_name), description="Two-tower retrieval @champion",
 ))
 record_asset(spark, OPS_TABLE, AssetRecord(
     chapter=3, asset_type="model", name=r_model_name, id=r_model_name,
-    url=format_asset_url(workspace_url, "model", r_model_name),
-    description="LightGBM ranker @champion",
+    url=format_asset_url(workspace_url, "model", r_model_name), description="LightGBM ranker @champion",
 ))
 exp = mlflow.get_experiment_by_name(experiment_path)
 record_asset(spark, OPS_TABLE, AssetRecord(

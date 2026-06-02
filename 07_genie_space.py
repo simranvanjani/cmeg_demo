@@ -1,24 +1,23 @@
 # Databricks notebook source
-# MAGIC %md
-# MAGIC # Chapter 6 — Genie Space for business users
+# MAGIC %md-sandbox
+# MAGIC # Chapter 6 of 6 — Genie Space for Business Users
 # MAGIC
-# MAGIC ## Why this matters
+# MAGIC > 🕐 **3 min to read · 1 min to run**
 # MAGIC
-# MAGIC Your customer's content team doesn't want to write SQL. They want to ask things like
-# MAGIC *"which dramas had the best completion rate last week?"* in plain English.
+# MAGIC ## What you'll learn
 # MAGIC
-# MAGIC **AI/BI Genie** does exactly that. We scope a Genie space to our gold + feature tables,
-# MAGIC seed it with domain glossary and a few example questions, and hand the URL to non-technical
-# MAGIC stakeholders.
+# MAGIC - How to expose your gold tables to **non-technical business users** without writing dashboards
+# MAGIC - How **Genie instructions** (a domain glossary) make plain-English queries actually accurate
+# MAGIC - How to seed the space with **sample questions** so customers see value on day one
 # MAGIC
-# MAGIC ## What we build
+# MAGIC ## Why Genie matters for this demo
 # MAGIC
-# MAGIC 1. A Genie space scoped to:
-# MAGIC    - `gold_interactions` — event-level enriched data
-# MAGIC    - `gold_user_360` — per-user aggregates
-# MAGIC    - `user_features`, `item_features` — engagement metadata
-# MAGIC 2. **Instructions**: domain glossary (e.g., *completed = watch_seconds ≥ 85% of duration*).
-# MAGIC 3. **8 sample questions** so the customer sees something interesting before typing anything.
+# MAGIC The data scientist team built the recommender. The content programming team wants to ask things like:
+# MAGIC > *"Which dramas had the best completion rate last week?"*
+# MAGIC > *"What share of viewing came from recommended vs self-discovered content yesterday?"*
+# MAGIC
+# MAGIC They don't write SQL. Genie does. We scope the Genie space to the right tables, seed it with
+# MAGIC business-friendly definitions, and the content team gets a chat interface over the data.
 
 # COMMAND ----------
 # MAGIC %run ./_resources/00-setup
@@ -26,6 +25,36 @@
 # COMMAND ----------
 import requests
 
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Step 1 of 3 — Pick a SQL warehouse to back the Genie space
+# MAGIC
+# MAGIC Genie translates plain-English questions to SQL, then runs that SQL on a serverless SQL warehouse.
+# MAGIC We use whichever warehouse you already have in this workspace.
+
+# COMMAND ----------
+warehouses = list(w.warehouses.list())
+assert warehouses, "No SQL warehouses available. Create one to host the Genie space."
+warehouse_id = warehouses[0].id
+print(f"Using warehouse: {warehouses[0].name} ({warehouse_id})")
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Step 2 of 3 — Define the domain glossary and sample questions
+# MAGIC
+# MAGIC ### Why instructions matter
+# MAGIC
+# MAGIC Without context, Genie has to guess what your columns mean. With a glossary, it understands the
+# MAGIC business — e.g., that `completed` means "watched ≥ 85% of duration", or that a "cold start" user
+# MAGIC means "fewer than 5 interactions". Good instructions turn an OK Genie space into a useful one.
+# MAGIC
+# MAGIC ### Why sample questions
+# MAGIC
+# MAGIC When the customer's content team opens Genie for the first time, they see prompts they can click
+# MAGIC instead of a blinking cursor. That's the difference between *"this is interesting"* and *"this is
+# MAGIC mine to use"*.
+
+# COMMAND ----------
 SAMPLE_QUESTIONS = [
     "What are the top 10 most-watched shows last week?",
     "Which content genres have the highest completion rate?",
@@ -39,7 +68,7 @@ SAMPLE_QUESTIONS = [
 
 INSTRUCTIONS = (
     "Domain glossary:\n"
-    "- watch_seconds: total seconds played in an interaction; only count > 30 seconds.\n"
+    "- watch_seconds: total seconds played in an interaction; only count when > 30 seconds.\n"
     "- completed: TRUE when watch_seconds >= 85% of duration.\n"
     "- cold_start: users with fewer than 5 interactions.\n"
     "- 'last 7 days': filter event_ts > current_timestamp() - INTERVAL 7 DAYS.\n\n"
@@ -48,16 +77,8 @@ INSTRUCTIONS = (
 )
 
 # COMMAND ----------
-# MAGIC %md ## Pick a SQL warehouse
-
-# COMMAND ----------
-warehouses = list(w.warehouses.list())
-assert warehouses, "No SQL warehouses available. Create one to host the Genie space."
-warehouse_id = warehouses[0].id
-print(f"Using warehouse: {warehouses[0].name} ({warehouse_id})")
-
-# COMMAND ----------
-# MAGIC %md ## Create the Genie space
+# MAGIC %md
+# MAGIC ## Step 3 of 3 — Create the Genie space via API
 
 # COMMAND ----------
 token = w.config.authenticate()["Authorization"].split(" ")[1]
@@ -99,9 +120,47 @@ if space_id:
             )
         except Exception:
             pass
+    print(f"✓ added {len(SAMPLE_QUESTIONS)} sample questions")
 
 # COMMAND ----------
-# MAGIC %md ## Wrap up
+# MAGIC %md
+# MAGIC ## 🔍 Try it
+# MAGIC
+# MAGIC Open the Genie space link in the recap card below. Click any of the sample questions, or type
+# MAGIC your own. Some good follow-ups to try after Genie answers:
+# MAGIC - *"Now group that by country"*
+# MAGIC - *"Show that as a bar chart"*
+# MAGIC - *"What changed between this week and last week?"*
+# MAGIC
+# MAGIC Genie remembers the conversation context, so follow-ups build on the previous query.
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Recap — what we just built
+# MAGIC
+# MAGIC - A Genie space scoped to gold + feature tables
+# MAGIC - Domain instructions so Genie understands business definitions
+# MAGIC - 8 sample questions so non-technical users see immediate value
+# MAGIC
+# MAGIC ## 🎉 Demo complete!
+# MAGIC
+# MAGIC Across 6 chapters, you built a complete content recommendation system on Databricks:
+# MAGIC
+# MAGIC | Chapter | What it adds |
+# MAGIC | --- | --- |
+# MAGIC | 1 — DLT Medallion | Governed lakehouse with data quality + Liquid Clustering |
+# MAGIC | 2 — Features & Vectors | Feature Store + Vector Search index over item embeddings |
+# MAGIC | 3 — Train & Register | Two-tower retrieval + LightGBM ranker with `@champion` aliases |
+# MAGIC | 4 — Serve & Explain | Chained inference + GenAI explanation, inference table capture |
+# MAGIC | 5 — Monitor & Govern | Lakehouse Monitoring, UC tags, audit log |
+# MAGIC | 6 — Genie Space | Plain-English Q&A for business users |
+# MAGIC
+# MAGIC ## Next steps for a real customer
+# MAGIC
+# MAGIC - **Replace synthetic data** with the customer's real event source (Kafka, Auto Loader from cloud storage)
+# MAGIC - **Scale up the two-tower** by swapping the numpy implementation for TensorFlow Recommenders
+# MAGIC - **Add AI Gateway** in front of the GenAI explanation layer for rate limiting + PII guardrails
+# MAGIC - **Run challenger/champion A/B** to safely promote new model versions
 
 # COMMAND ----------
 if space_id:
@@ -117,6 +176,6 @@ chapter_complete(
         ("genie", "CMEG Content Analytics",
          format_asset_url(workspace_url, "genie", space_id) if space_id else workspace_url + "/sql/genie"),
     ],
-    next_label="RUNME (back to TOC)",
+    next_label="RUNME (back to overview)",
     next_url=f"{workspace_url}/#workspace{REPO_ROOT}/RUNME",
 )
