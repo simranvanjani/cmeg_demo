@@ -152,6 +152,6 @@ chapter_complete(
         ("endpoint", endpoint_name, format_asset_url(workspace_url, "endpoint", endpoint_name)),
         ("table", view, format_asset_url(workspace_url, "table", view)),
     ],
-    next_label="05-Monitor-and-Govern",
-    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/05-Monitor-and-Govern",
+    next_label="06_monitor_and_govern",
+    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/06_monitor_and_govern",
 )

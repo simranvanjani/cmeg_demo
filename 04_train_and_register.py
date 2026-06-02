@@ -165,6 +165,6 @@ chapter_complete(
         ("model", tt_model_name, format_asset_url(workspace_url, "model", tt_model_name)),
         ("model", r_model_name, format_asset_url(workspace_url, "model", r_model_name)),
     ],
-    next_label="04-Serve-and-Explain",
-    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/04-Serve-and-Explain",
+    next_label="05_serve_and_explain",
+    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/05_serve_and_explain",
 )

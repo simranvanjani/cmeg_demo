@@ -42,14 +42,14 @@
 # MAGIC ## Trigger the pipeline
 # MAGIC
 # MAGIC The DLT pipeline definition lives at `_resources/_dlt_pipeline`. The pipeline itself
-# MAGIC was created during install (`00-CMEG-Demo-Intro` → `_resources/02-create-resources`).
+# MAGIC was created during install (`RUNME` → `_resources/02-create-resources`).
 # MAGIC We now find it and trigger an update.
 
 # COMMAND ----------
 import time
 
 pipelines = [p for p in w.pipelines.list_pipelines(filter="name LIKE 'cmeg_dlt_pipeline'")]
-assert pipelines, "Pipeline not found. Run 00-CMEG-Demo-Intro first."
+assert pipelines, "Pipeline not found. Run RUNME first."
 pipeline = pipelines[0]
 print(f"Pipeline id: {pipeline.pipeline_id}")
 
@@ -112,6 +112,6 @@ chapter_complete(
         ("table", FQ("gold_interactions"), format_asset_url(workspace_url, "table", FQ("gold_interactions"))),
         ("table", FQ("gold_user_360"), format_asset_url(workspace_url, "table", FQ("gold_user_360"))),
     ],
-    next_label="02-Features-and-Vectors",
-    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/02-Features-and-Vectors",
+    next_label="03_features_and_vectors",
+    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/03_features_and_vectors",
 )

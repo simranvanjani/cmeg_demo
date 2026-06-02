@@ -7,7 +7,7 @@
 # MAGIC and sets the catalog/schema/helpers as globals in the calling notebook's scope.
 # MAGIC
 # MAGIC No resource creation happens here — that lives in `01-generate-data` and
-# MAGIC `02-create-resources`, both run once by `00-CMEG-Demo-Intro`.
+# MAGIC `02-create-resources`, both run once by `RUNME`.
 
 # COMMAND ----------
 import sys, os, importlib

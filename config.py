@@ -5,13 +5,15 @@
 
 Edit this file BEFORE running the demo. These are the only knobs you need.
 
-Save the file, then open `00-CMEG-Demo-Intro.py` and click Run All.
+Save the file, then open `RUNME.py` and click Run All.
 """
 
 # --- Required ----------------------------------------------------------------
 
-# Unity Catalog name. Must exist OR you must have CREATE CATALOG privileges.
-# `main` exists in every workspace and is a safe default.
+# Unity Catalog name. MUST already exist in your workspace.
+# The installer will NOT attempt to create a catalog (most customer workspaces
+# don't have Default Storage or metastore-admin permissions for that).
+# Use `main` (present in every workspace) or any catalog you can CREATE SCHEMA in.
 CATALOG = "main"
 
 # Schema name. Will be created under CATALOG if it doesn't exist.

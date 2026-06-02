@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Create DLT pipeline + orchestrator + cleanup jobs
 # MAGIC
-# MAGIC Run **once** by `00-CMEG-Demo-Intro` during install. Uses the Databricks SDK to
+# MAGIC Run **once** by `RUNME` during install. Uses the Databricks SDK to
 # MAGIC create the DLT pipeline pointing at `_resources/_dlt_pipeline`, and two jobs:
 # MAGIC `cmeg_orchestrator` (runs all chapters in order) and `cmeg_cleanup` (uninstall).
 # MAGIC
@@ -19,12 +19,12 @@ from databricks.sdk.service.pipelines import PipelineLibrary, NotebookLibrary
 DLT_DEFINITION = f"{REPO_ROOT}/_resources/_dlt_pipeline"
 UNINSTALL_NB = f"{REPO_ROOT}/_resources/99-uninstall"
 CHAPTERS = {
-    "dlt_medallion":         f"{REPO_ROOT}/01-DLT-Medallion",
-    "features_and_vectors":  f"{REPO_ROOT}/02-Features-and-Vectors",
-    "train_and_register":    f"{REPO_ROOT}/03-Train-and-Register",
-    "serve_and_explain":     f"{REPO_ROOT}/04-Serve-and-Explain",
-    "monitor_and_govern":    f"{REPO_ROOT}/05-Monitor-and-Govern",
-    "genie_space":           f"{REPO_ROOT}/06-Genie-Space",
+    "dlt_medallion":         f"{REPO_ROOT}/02_dlt_medallion",
+    "features_and_vectors":  f"{REPO_ROOT}/03_features_and_vectors",
+    "train_and_register":    f"{REPO_ROOT}/04_train_and_register",
+    "serve_and_explain":     f"{REPO_ROOT}/05_serve_and_explain",
+    "monitor_and_govern":    f"{REPO_ROOT}/06_monitor_and_govern",
+    "genie_space":           f"{REPO_ROOT}/07_genie_space",
 }
 
 # COMMAND ----------

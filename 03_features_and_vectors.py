@@ -135,6 +135,6 @@ chapter_complete(
         ("table", item_feat_table, format_asset_url(workspace_url, "table", item_feat_table)),
         ("vector_index", index_name, format_asset_url(workspace_url, "vector_index", index_name)),
     ],
-    next_label="03-Train-and-Register",
-    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/03-Train-and-Register",
+    next_label="04_train_and_register",
+    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/04_train_and_register",
 )

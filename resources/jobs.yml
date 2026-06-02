@@ -10,31 +10,31 @@ resources:
           depends_on:
             - task_key: dlt_medallion
           notebook_task:
-            notebook_path: ../02-Features-and-Vectors.py
+            notebook_path: ../03_features_and_vectors.py
           job_cluster_key: demo_cluster
         - task_key: train_and_register
           depends_on:
             - task_key: features_and_vectors
           notebook_task:
-            notebook_path: ../03-Train-and-Register.py
+            notebook_path: ../04_train_and_register.py
           job_cluster_key: demo_cluster
         - task_key: serve_and_explain
           depends_on:
             - task_key: train_and_register
           notebook_task:
-            notebook_path: ../04-Serve-and-Explain.py
+            notebook_path: ../05_serve_and_explain.py
           job_cluster_key: demo_cluster
         - task_key: monitor_and_govern
           depends_on:
             - task_key: serve_and_explain
           notebook_task:
-            notebook_path: ../05-Monitor-and-Govern.py
+            notebook_path: ../06_monitor_and_govern.py
           job_cluster_key: demo_cluster
         - task_key: genie_space
           depends_on:
             - task_key: monitor_and_govern
           notebook_task:
-            notebook_path: ../06-Genie-Space.py
+            notebook_path: ../07_genie_space.py
           job_cluster_key: demo_cluster
       job_clusters:
         - job_cluster_key: demo_cluster

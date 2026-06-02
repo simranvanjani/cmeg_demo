@@ -117,6 +117,6 @@ chapter_complete(
         ("genie", "CMEG Content Analytics",
          format_asset_url(workspace_url, "genie", space_id) if space_id else workspace_url + "/sql/genie"),
     ],
-    next_label="00-CMEG-Demo-Intro (back to TOC)",
-    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/00-CMEG-Demo-Intro",
+    next_label="RUNME (back to TOC)",
+    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/RUNME",
 )

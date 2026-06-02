@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Generate synthetic data
 # MAGIC
-# MAGIC This notebook is run **once** by `00-CMEG-Demo-Intro` during install.
+# MAGIC This notebook is run **once** by `RUNME` during install.
 # MAGIC It creates the schema (if missing), the landing UC Volume, and writes synthetic
 # MAGIC users / items / interactions as parquet files. The DLT pipeline (chapter 1) then
 # MAGIC reads from this volume via Auto Loader.
@@ -13,19 +13,26 @@
 # MAGIC %run ./00-setup
 
 # COMMAND ----------
-# Create catalog, schema, volume (idempotent)
-spark.sql(f"CREATE CATALOG IF NOT EXISTS {CATALOG}")
+# Validate the catalog exists. We NEVER create catalogs — that requires Default
+# Storage or an explicit MANAGED LOCATION, which most customer workspaces don't have.
+# The customer must point CATALOG in config.py at an existing catalog they can
+# CREATE SCHEMA in.
+_existing = {c.name for c in w.catalogs.list()}
+if CATALOG not in _existing:
+    raise RuntimeError(
+        f"\n\nCatalog '{CATALOG}' does not exist in this workspace.\n"
+        f"Edit config.py and set CATALOG to one of:\n  - "
+        + "\n  - ".join(sorted(c for c in _existing if c not in ("system",)))
+        + "\n\n(You can also create a new catalog yourself in the Catalog UI, "
+        "then set CATALOG to its name.)\n"
+    )
+print(f"✓ using existing catalog: {CATALOG}")
+
+# Schema and volume are created if missing (these need only CREATE SCHEMA / CREATE VOLUME
+# privileges on the catalog, NOT metastore admin).
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
 spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.landing")
-print(f"✓ catalog/schema/volume ready: {CATALOG}.{SCHEMA}")
-
-# COMMAND ----------
-# Predictive Optimization (best-effort)
-try:
-    spark.sql(f"ALTER CATALOG {CATALOG} ENABLE PREDICTIVE OPTIMIZATION")
-    print("✓ Predictive Optimization enabled")
-except Exception as e:
-    print(f"○ Predictive Optimization skipped: {e}")
+print(f"✓ schema/volume ready: {CATALOG}.{SCHEMA}")
 
 # COMMAND ----------
 # Tag schema for ownership

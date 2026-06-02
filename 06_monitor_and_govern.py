@@ -89,6 +89,6 @@ chapter_complete(
     created=[
         ("monitor", inference_table, format_asset_url(workspace_url, "monitor", inference_table)),
     ],
-    next_label="06-Genie-Space",
-    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/06-Genie-Space",
+    next_label="07_genie_space",
+    next_url=f"{workspace_url}/#workspace{REPO_ROOT}/07_genie_space",
 )
