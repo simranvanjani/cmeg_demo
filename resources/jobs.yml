@@ -1,0 +1,68 @@
+resources:
+  jobs:
+    cmeg_orchestrator:
+      name: cmeg_orchestrator
+      tasks:
+        - task_key: setup_and_data
+          notebook_task:
+            notebook_path: ../narrative/01_setup_and_data.py
+          job_cluster_key: demo_cluster
+        - task_key: dlt_medallion
+          depends_on:
+            - task_key: setup_and_data
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.cmeg_dlt_pipeline.id}
+        - task_key: features_and_vectors
+          depends_on:
+            - task_key: dlt_medallion
+          notebook_task:
+            notebook_path: ../narrative/03_features_and_vectors.py
+          job_cluster_key: demo_cluster
+        - task_key: train_and_register
+          depends_on:
+            - task_key: features_and_vectors
+          notebook_task:
+            notebook_path: ../narrative/04_train_and_register.py
+          job_cluster_key: demo_cluster
+        - task_key: serve_and_explain
+          depends_on:
+            - task_key: train_and_register
+          notebook_task:
+            notebook_path: ../narrative/05_serve_and_explain.py
+          job_cluster_key: demo_cluster
+        - task_key: monitor_and_govern
+          depends_on:
+            - task_key: serve_and_explain
+          notebook_task:
+            notebook_path: ../narrative/06_monitor_and_govern.py
+          job_cluster_key: demo_cluster
+        - task_key: genie_space
+          depends_on:
+            - task_key: monitor_and_govern
+          notebook_task:
+            notebook_path: ../narrative/07_genie_space.py
+          job_cluster_key: demo_cluster
+      job_clusters:
+        - job_cluster_key: demo_cluster
+          new_cluster:
+            spark_version: ${var.dbr_version}
+            node_type_id: ${var.node_type}
+            num_workers: 1
+            data_security_mode: SINGLE_USER
+            runtime_engine: PHOTON
+
+    cmeg_cleanup:
+      name: cmeg_cleanup
+      tasks:
+        - task_key: uninstall
+          notebook_task:
+            notebook_path: ../_install/uninstall.py
+          job_cluster_key: demo_cluster
+      job_clusters:
+        - job_cluster_key: demo_cluster
+          new_cluster:
+            spark_version: ${var.dbr_version}
+            node_type_id: ${var.node_type}
+            num_workers: 1
+            data_security_mode: SINGLE_USER
+            runtime_engine: PHOTON
