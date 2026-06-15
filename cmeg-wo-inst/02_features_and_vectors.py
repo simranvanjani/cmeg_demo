@@ -22,7 +22,7 @@
 # MAGIC %run ./_resources/00-setup
 
 # COMMAND ----------
-# MAGIC %pip install -q --no-deps databricks-vectorsearch
+# MAGIC %pip install -q --no-deps databricks-vectorsearch "protobuf>=5.29.4,<6"
 
 # COMMAND ----------
 dbutils.library.restartPython()
