@@ -22,7 +22,7 @@
 # MAGIC %run ./_resources/00-setup
 
 # COMMAND ----------
-# MAGIC %pip install -q --no-deps databricks-vectorsearch databricks-feature-engineering
+# MAGIC %pip install -q --no-deps databricks-vectorsearch
 
 # COMMAND ----------
 dbutils.library.restartPython()
