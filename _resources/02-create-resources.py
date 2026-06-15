@@ -12,8 +12,7 @@
 # MAGIC %run ./00-setup
 
 # COMMAND ----------
-from databricks.sdk.service.jobs import Task, NotebookTask, JobCluster, TaskDependency, PipelineTask
-from databricks.sdk.service.compute import ClusterSpec, DataSecurityMode, RuntimeEngine
+from databricks.sdk.service.jobs import Task, NotebookTask, TaskDependency, PipelineTask, JobSettings
 from databricks.sdk.service.pipelines import PipelineLibrary, NotebookLibrary
 
 DLT_DEFINITION = f"{REPO_ROOT}/_resources/_dlt_pipeline"
@@ -61,23 +60,14 @@ record_asset(spark, OPS_TABLE, AssetRecord(
 ))
 
 # COMMAND ----------
-# Cluster spec shared across job tasks
-demo_cluster = JobCluster(
-    job_cluster_key="demo_cluster",
-    new_cluster=ClusterSpec(
-        spark_version="15.4.x-cpu-ml-scala2.12",
-        node_type_id="Standard_D4ds_v5",
-        num_workers=1,
-        data_security_mode=DataSecurityMode.SINGLE_USER,
-        runtime_engine=RuntimeEngine.PHOTON,
-    ),
-)
+# Jobs run on SERVERLESS compute (no job_clusters / job_cluster_key). Notebook tasks
+# without a cluster reference automatically run on serverless — the right default for
+# a portable accelerator that must work in serverless-only workspaces.
 
 def nb_task(key, path, depends=None):
     return Task(
         task_key=key,
         notebook_task=NotebookTask(notebook_path=path),
-        job_cluster_key="demo_cluster",
         depends_on=[TaskDependency(task_key=d) for d in (depends or [])],
     )
 
@@ -94,24 +84,18 @@ orchestrator_tasks = [
 ]
 
 # COMMAND ----------
-# Orchestrator job (idempotent)
+# Orchestrator job (idempotent). reset() takes a JobSettings object, not a dict.
 orchestrator_name = "cmeg_orchestrator"
 existing_job = next((j for j in w.jobs.list(name=orchestrator_name)), None)
 if existing_job:
     w.jobs.reset(
         job_id=existing_job.job_id,
-        new_settings={
-            "name": orchestrator_name,
-            "tasks": [t.as_dict() for t in orchestrator_tasks],
-            "job_clusters": [demo_cluster.as_dict()],
-        },
+        new_settings=JobSettings(name=orchestrator_name, tasks=orchestrator_tasks),
     )
     orchestrator_id = existing_job.job_id
     print(f"✓ orchestrator updated: {orchestrator_id}")
 else:
-    orchestrator_id = w.jobs.create(
-        name=orchestrator_name, tasks=orchestrator_tasks, job_clusters=[demo_cluster],
-    ).job_id
+    orchestrator_id = w.jobs.create(name=orchestrator_name, tasks=orchestrator_tasks).job_id
     print(f"✓ orchestrator created: {orchestrator_id}")
 
 record_asset(spark, OPS_TABLE, AssetRecord(
@@ -128,15 +112,11 @@ existing_cleanup = next((j for j in w.jobs.list(name=cleanup_name)), None)
 if existing_cleanup:
     w.jobs.reset(
         job_id=existing_cleanup.job_id,
-        new_settings={
-            "name": cleanup_name,
-            "tasks": [t.as_dict() for t in cleanup_tasks],
-            "job_clusters": [demo_cluster.as_dict()],
-        },
+        new_settings=JobSettings(name=cleanup_name, tasks=cleanup_tasks),
     )
     cleanup_id = existing_cleanup.job_id
 else:
-    cleanup_id = w.jobs.create(name=cleanup_name, tasks=cleanup_tasks, job_clusters=[demo_cluster]).job_id
+    cleanup_id = w.jobs.create(name=cleanup_name, tasks=cleanup_tasks).job_id
 print(f"✓ cleanup job ready: {cleanup_id}")
 
 record_asset(spark, OPS_TABLE, AssetRecord(
