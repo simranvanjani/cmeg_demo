@@ -15,7 +15,7 @@
 DROP_SCHEMA = False
 
 # COMMAND ----------
-# MAGIC %pip install -q databricks-vectorsearch
+# MAGIC %pip install -q --no-deps databricks-vectorsearch
 
 # COMMAND ----------
 dbutils.library.restartPython()

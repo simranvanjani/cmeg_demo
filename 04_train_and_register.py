@@ -32,7 +32,7 @@
 # MAGIC %run ./_resources/00-setup
 
 # COMMAND ----------
-# MAGIC %pip install -q lightgbm optuna scikit-learn
+# MAGIC %pip install -q lightgbm optuna
 
 # COMMAND ----------
 dbutils.library.restartPython()
