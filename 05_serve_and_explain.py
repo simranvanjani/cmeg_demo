@@ -10,6 +10,7 @@
 # MAGIC - How to **chain multiple models behind a single serving endpoint** so the app makes one API call
 # MAGIC - The **diversity rerank** pattern — preventing the "5 dramas in a row" failure mode
 # MAGIC - How to add a **GenAI explanation** to every recommendation card via Foundation Models
+# MAGIC - How **Mosaic AI Gateway** governs the endpoint (usage tracking, rate limits, PII guardrails)
 # MAGIC - How **inference table auto-capture** records every request/response automatically for chapter 5's monitoring
 # MAGIC - **Dynamic views** for column-level PII masking in UC
 # MAGIC
@@ -175,6 +176,53 @@ if SERVING_ENDPOINT_ENABLED:
         )
 else:
     print("○ skipping endpoint creation (SERVING_ENDPOINT_ENABLED=False in config.py)")
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ### Govern the endpoint with **Mosaic AI Gateway**
+# MAGIC
+# MAGIC AI Gateway sits in front of the serving endpoint and adds governance without changing the model:
+# MAGIC - **Usage tracking** — per-request usage logged to system tables (cost/volume attribution)
+# MAGIC - **Rate limiting** — caps requests/min so a runaway client can't overwhelm the endpoint
+# MAGIC - **Guardrails** — PII detection on inputs/outputs (best-effort; fully supported on Foundation
+# MAGIC   Model / external endpoints, so we apply it defensively here)
+# MAGIC
+# MAGIC Note: this is separate from the **inference table** above — the inference table captures payloads
+# MAGIC for the Lakehouse Monitor (chapter 5), while AI Gateway governs traffic and usage.
+
+# COMMAND ----------
+if SERVING_ENDPOINT_ENABLED:
+    from databricks.sdk.service.serving import (
+        AiGatewayUsageTrackingConfig, AiGatewayRateLimit, AiGatewayGuardrails,
+    )
+    usage = AiGatewayUsageTrackingConfig.from_dict({"enabled": True})
+    rate = [AiGatewayRateLimit.from_dict({"calls": 100, "renewal_period": "minute", "key": "endpoint"})]
+    guard = AiGatewayGuardrails.from_dict({
+        "input":  {"pii": {"behavior": "BLOCK"}},
+        "output": {"pii": {"behavior": "BLOCK"}},
+    })
+    try:
+        # try full config (usage + rate limits + PII guardrails)
+        w.serving_endpoints.put_ai_gateway(
+            name=endpoint_name,
+            usage_tracking_config=usage,
+            rate_limits=rate,
+            guardrails=guard,
+        )
+        print("✓ AI Gateway enabled: usage tracking + rate limit + PII guardrails")
+    except Exception as e:
+        print(f"○ Guardrails not supported on this endpoint type; enabling usage + rate limits only ({e})")
+        try:
+            w.serving_endpoints.put_ai_gateway(
+                name=endpoint_name,
+                usage_tracking_config=usage,
+                rate_limits=rate,
+            )
+            print("✓ AI Gateway enabled: usage tracking + rate limit")
+        except Exception as e2:
+            print(f"○ AI Gateway not applied: {e2}")
+else:
+    print("○ skipping AI Gateway (serving endpoint disabled in config.py)")
 
 # COMMAND ----------
 # MAGIC %md
