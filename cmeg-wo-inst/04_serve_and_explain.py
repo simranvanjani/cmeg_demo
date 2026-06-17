@@ -6,6 +6,7 @@
 # MAGIC
 # MAGIC ## What you'll learn
 # MAGIC
+# MAGIC - How **Databricks Vector Search** (AI semantic search) generates the candidate shows
 # MAGIC - How to **chain multiple models behind a single serving endpoint** so the app makes one API call
 # MAGIC - The **diversity rerank** pattern — preventing the "5 dramas in a row" failure mode
 # MAGIC - How to add a **GenAI explanation** to every recommendation card via Foundation Models
@@ -19,7 +20,7 @@
 # MAGIC   { "user_id": "u_0001234" }
 # MAGIC
 # MAGIC ┌──────────────────────────────────────────────────────────────────────┐
-# MAGIC │  Stage 1 — Two-tower retrieval     →  100 candidate content_ids       │
+# MAGIC │  Stage 1 — Vector Search retrieval →  100 semantically-similar shows  │
 # MAGIC │  Stage 2 — LightGBM ranker         →  scored candidates (P(completed))│
 # MAGIC │  Stage 3 — Diversity rerank        →  genre-deduped top 5             │
 # MAGIC │  Stage 4 — Foundation Model        →  "Why we recommend this" per card│
@@ -49,7 +50,50 @@ client = mlflow.MlflowClient()
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Step 1 of 4 — Build the chained pyfunc
+# MAGIC ## Step 1 of 5 — Retrieval with Databricks Vector Search (AI semantic search)
+# MAGIC
+# MAGIC This is the **AI-search core** of the recommender. For a user, we take the synopsis of the show
+# MAGIC they watched most ("seed") and ask the `item_index` (BGE embeddings) for the most **semantically
+# MAGIC similar** shows. Those candidates are what the ranker then scores — so Vector Search, not a
+# MAGIC hardcoded query, is producing the recommended shows.
+
+# COMMAND ----------
+from databricks.vector_search.client import VectorSearchClient
+import time as _time
+
+vs = VectorSearchClient(disable_notice=True)
+vs_index = vs.get_index(endpoint_name="cmeg_vs_endpoint", index_name=FQ("item_index"))
+
+# wait until the index is ready to serve queries
+for _ in range(40):
+    try:
+        _st = vs_index.describe().get("status", {})
+        if _st.get("ready") or "ONLINE" in str(_st.get("detailed_state", "")):
+            break
+    except Exception:
+        pass
+    _time.sleep(15)
+
+# pick a sample user, find the show they watched most, search for similar shows
+sample_uid = "u_0000001"
+_seed_id_row = spark.table(FQ("user_features")).filter(f"user_id = '{sample_uid}'").select("seed_content_id").first()
+seed_id = _seed_id_row[0] if _seed_id_row else None
+seed = spark.table(FQ("item_features")).filter(f"content_id = '{seed_id}'").select("title", "synopsis", "genre").first()
+print(f"User {sample_uid} watched most: {seed['title'] if seed else 'n/a'} ({seed['genre'] if seed else ''})")
+
+if seed:
+    res = vs_index.similarity_search(
+        query_text=seed["synopsis"],
+        columns=["content_id", "title", "genre"],
+        num_results=10,
+    )
+    rows = (res.get("result", {}) or {}).get("data_array", []) or []
+    display(pd.DataFrame(rows, columns=["content_id", "title", "genre", "similarity_score"]))
+    print("☝ These candidate shows came from Databricks Vector Search (semantic similarity).")
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Step 2 of 5 — Build the chained pyfunc
 # MAGIC
 # MAGIC A pyfunc model is just a Python class with a `predict()` method. Ours wraps the two registered
 # MAGIC models and adds the diversity rerank + GenAI explanation logic. The code lives in
@@ -79,9 +123,13 @@ with mlflow.start_run(run_name="rec_chain"):
         artifacts={"two_tower": tt_uri, "ranker": r_uri, "item_meta": item_meta_path, "user_meta": user_meta_path},
         signature=infer_signature(input_ex, [[]]),
         input_example=input_ex,
-        model_config={"genai_model": GENAI_MODEL, "top_k": 5},
+        model_config={
+            "genai_model": GENAI_MODEL, "top_k": 5, "num_candidates": 100,
+            "vs_endpoint": "cmeg_vs_endpoint", "vs_index": FQ("item_index"),
+        },
         registered_model_name=chain_name,
-        pip_requirements=["mlflow", "pandas", "lightgbm", "scikit-learn", "databricks-sdk"],
+        pip_requirements=["mlflow", "pandas", "lightgbm", "scikit-learn",
+                          "databricks-sdk", "databricks-vectorsearch", "protobuf>=5.29.4,<6"],
     )
 chain_latest = client.get_registered_model(chain_name).latest_versions[0].version
 client.set_registered_model_alias(chain_name, "champion", version=chain_latest)
@@ -89,7 +137,7 @@ print(f"✓ {chain_name} v{chain_latest} @champion")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Step 2 of 4 — Deploy to a Model Serving endpoint with inference-table capture
+# MAGIC ## Step 3 of 5 — Deploy to a Model Serving endpoint with inference-table capture
 # MAGIC
 # MAGIC `auto_capture_config` is the key piece: **every request and response gets written to a Delta
 # MAGIC table automatically**, with no extra code. That table powers the Lakehouse Monitor in chapter 5.
@@ -140,7 +188,7 @@ else:
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Step 3 of 4 — Create a dynamic view that masks PII
+# MAGIC ## Step 4 of 5 — Create a dynamic view that masks PII
 # MAGIC
 # MAGIC Users of the `user_features` table shouldn't see raw `fav_genre` unless they're in the
 # MAGIC `cmeg_pii_readers` group. UC dynamic views give us per-row, per-column access control
@@ -167,7 +215,7 @@ display(spark.table(view).limit(5))
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Step 4 of 4 — Confirm everything is wired up
+# MAGIC ## Step 5 of 5 — Confirm everything is wired up
 
 # COMMAND ----------
 inference_table = FQ("cmeg_inference_payload")
