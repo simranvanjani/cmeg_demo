@@ -81,9 +81,7 @@ display(spark.sql(f"""
     SELECT table_name, table_type, comment
     FROM {CATALOG}.information_schema.tables
     WHERE table_schema = '{SCHEMA}'
-      AND (table_name LIKE 'bronze\\_%' ESCAPE '\\'
-           OR table_name LIKE 'silver\\_%' ESCAPE '\\'
-           OR table_name LIKE 'gold\\_%' ESCAPE '\\')
+      AND (table_name LIKE 'bronze%' OR table_name LIKE 'silver%' OR table_name LIKE 'gold%')
     ORDER BY table_name
 """))
 
