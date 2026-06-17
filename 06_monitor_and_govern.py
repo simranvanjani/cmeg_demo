@@ -20,7 +20,7 @@
 # MAGIC 2. **Prediction drift** — outputs skew (suddenly recommending the same 5 items to everyone, or
 # MAGIC    average scores creeping up over time).
 # MAGIC
-# MAGIC **Lakehouse Monitoring** sits on top of the inference table (auto-captured in chapter 4) and
+# MAGIC **Lakehouse Monitoring** sits on top of the inference table (logged via AI Gateway in chapter 4) and
 # MAGIC computes drift metrics nightly. You see them as charts on the table page — and can wire DBSQL
 # MAGIC alerts on them.
 
@@ -55,7 +55,7 @@ print(f"✓ tagged {user_feat} with pii + owner + cost_center")
 # MAGIC ## Step 2 of 3 — Create a Lakehouse Monitor on the inference table
 # MAGIC
 # MAGIC We use the `TimeSeries` profile because the inference table has a natural time column
-# MAGIC (`timestamp_ms`). The monitor computes daily slices and reports:
+# MAGIC (`request_time`, from the AI Gateway inference table). The monitor computes daily slices and reports:
 # MAGIC - **Numeric drift**: how feature distributions have shifted over time
 # MAGIC - **Categorical drift**: how genre/device/country distributions have shifted
 # MAGIC - **Data quality**: nulls, type errors
@@ -68,14 +68,21 @@ print(f"✓ tagged {user_feat} with pii + owner + cost_center")
 
 # COMMAND ----------
 inference_table = FQ("cmeg_inference_payload")
+# AI Gateway inference tables use `request_time`; pick whatever timestamp column exists.
+try:
+    cols = [c.name for c in spark.table(inference_table).schema]
+    ts_col = next((c for c in ("request_time", "timestamp_ms", "__db_request_time") if c in cols), None)
+except Exception:
+    ts_col = "request_time"   # table not created until the endpoint serves a request
+
 try:
     w.quality_monitors.create(
         table_name=inference_table,
         assets_dir=build_monitor_dir(current_user),
         output_schema_name=f"{CATALOG}.{SCHEMA}",
-        time_series=MonitorTimeSeries(timestamp_col="timestamp_ms", granularities=["1 day"]),
+        time_series=MonitorTimeSeries(timestamp_col=ts_col, granularities=["1 day"]),
     )
-    print(f"✓ monitor created on {inference_table}")
+    print(f"✓ monitor created on {inference_table} (timestamp col: {ts_col})")
 except Exception as e:
     print(f"○ monitor may already exist or inference table not yet populated: {e}")
 

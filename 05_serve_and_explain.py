@@ -43,7 +43,7 @@ import mlflow
 from mlflow.models.signature import infer_signature
 import pandas as pd
 
-from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedEntityInput, AutoCaptureConfigInput
+from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedEntityInput
 from cmeg.serving import RecChain
 
 mlflow.set_registry_uri("databricks-uc")
@@ -140,8 +140,9 @@ print(f"✓ {chain_name} v{chain_latest} @champion")
 # MAGIC %md
 # MAGIC ## Step 3 of 5 — Deploy to a Model Serving endpoint with inference-table capture
 # MAGIC
-# MAGIC `auto_capture_config` is the key piece: **every request and response gets written to a Delta
-# MAGIC table automatically**, with no extra code. That table powers the Lakehouse Monitor in chapter 5.
+# MAGIC The endpoint just serves the model. **Payload logging (the inference table) is configured through
+# MAGIC Mosaic AI Gateway** below — the modern, unified path (we do NOT use the legacy `auto_capture_config`).
+# MAGIC That single inference table powers the Lakehouse Monitor in chapter 5.
 # MAGIC
 # MAGIC `scale_to_zero_enabled=True` means the endpoint costs nothing when idle — it spins up on first
 # MAGIC request, then drops back to zero replicas after a few minutes of no traffic.
@@ -158,10 +159,7 @@ config = EndpointCoreConfigInput(
             scale_to_zero_enabled=True, workload_size="Small",
         )
     ],
-    auto_capture_config=AutoCaptureConfigInput(
-        catalog_name=CATALOG, schema_name=SCHEMA, table_name_prefix="cmeg_inference", enabled=True,
-    ),
-)
+)  # inference table is configured via AI Gateway below (not legacy auto_capture_config)
 
 if SERVING_ENDPOINT_ENABLED:
     try:
@@ -172,7 +170,6 @@ if SERVING_ENDPOINT_ENABLED:
         w.serving_endpoints.update_config(
             name=endpoint_name,
             served_entities=config.served_entities,
-            auto_capture_config=config.auto_capture_config,
         )
 else:
     print("○ skipping endpoint creation (SERVING_ENDPOINT_ENABLED=False in config.py)")
@@ -194,33 +191,26 @@ else:
 if SERVING_ENDPOINT_ENABLED:
     from databricks.sdk.service.serving import (
         AiGatewayUsageTrackingConfig, AiGatewayRateLimit, AiGatewayGuardrails,
+        AiGatewayInferenceTableConfig,
     )
     usage = AiGatewayUsageTrackingConfig.from_dict({"enabled": True})
     rate = [AiGatewayRateLimit.from_dict({"calls": 100, "renewal_period": "minute", "key": "endpoint"})]
+    inf = AiGatewayInferenceTableConfig.from_dict({
+        "enabled": True, "catalog_name": CATALOG, "schema_name": SCHEMA, "table_name_prefix": "cmeg_inference",
+    })
     guard = AiGatewayGuardrails.from_dict({
         "input":  {"pii": {"behavior": "BLOCK"}},
         "output": {"pii": {"behavior": "BLOCK"}},
     })
+    base = dict(usage_tracking_config=usage, rate_limits=rate, inference_table_config=inf)
     try:
-        # try full config (usage + rate limits + PII guardrails)
-        w.serving_endpoints.put_ai_gateway(
-            name=endpoint_name,
-            usage_tracking_config=usage,
-            rate_limits=rate,
-            guardrails=guard,
-        )
-        print("✓ AI Gateway enabled: usage tracking + rate limit + PII guardrails")
+        # AI Gateway owns: usage tracking + rate limit + inference table + PII guardrails
+        w.serving_endpoints.put_ai_gateway(name=endpoint_name, guardrails=guard, **base)
+        print("✓ AI Gateway: usage tracking + rate limit + inference table + PII guardrails")
     except Exception as e:
-        print(f"○ Guardrails not supported on this endpoint type; enabling usage + rate limits only ({e})")
-        try:
-            w.serving_endpoints.put_ai_gateway(
-                name=endpoint_name,
-                usage_tracking_config=usage,
-                rate_limits=rate,
-            )
-            print("✓ AI Gateway enabled: usage tracking + rate limit")
-        except Exception as e2:
-            print(f"○ AI Gateway not applied: {e2}")
+        print(f"○ Guardrails unsupported on this endpoint type; applying without them ({e})")
+        w.serving_endpoints.put_ai_gateway(name=endpoint_name, **base)
+        print("✓ AI Gateway: usage tracking + rate limit + inference table")
 else:
     print("○ skipping AI Gateway (serving endpoint disabled in config.py)")
 
